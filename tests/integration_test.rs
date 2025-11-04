@@ -691,7 +691,7 @@ fn iterate_zip_with_cjk_pathname() {
 fn iterate_truncated_archive() {
     let source = std::fs::File::open("tests/fixtures/truncated.log.gz").unwrap();
 
-    for content in ArchiveIterator::from_read(source).unwrap() {
+    for content in ArchiveIterator::from_read(source, None).unwrap() {
         if let ArchiveContents::Err(Error::Unknown) = content {
             return;
         }
@@ -703,7 +703,7 @@ fn iterate_truncated_archive() {
 fn uncompress_bytes_helper(bytes: &[u8]) {
     let wrapper = Cursor::new(bytes);
 
-    for content in ArchiveIterator::from_read(wrapper).unwrap() {
+    for content in ArchiveIterator::from_read(wrapper, None).unwrap() {
         if let ArchiveContents::Err(Error::Unknown) = content {
             return;
         }
@@ -860,4 +860,51 @@ fn test_slice_from_raw_parts() {
     let mut source = std::fs::File::open("tests/fixtures/slice_from_raw_parts.zip").unwrap();
     let mut outfile = tempfile::NamedTempFile::new().unwrap();
     uncompress_archive_file(&mut source, &mut outfile, "1/2/1.txt").unwrap();
+}
+
+
+#[test]
+fn iterate_archive_with_password() {
+    let source = std::fs::File::open("tests/fixtures/with-password.zip").unwrap();
+    let source_password: ArchivePassword = "123".into();
+
+    let mut files_result: Vec<String> = Vec::new();
+    let mut current_file_content: Vec<u8> = vec![];
+    let mut current_file_name = String::new();
+
+    let mut iter = ArchiveIteratorBuilder::new(source)
+        .with_password(source_password)
+        .filter(|name, _| name.ends_with(".txt"))
+        .build()
+        .unwrap();
+
+    for content in &mut iter {
+        match content {
+            ArchiveContents::StartOfEntry(name, _stat) => {
+                current_file_name = name;
+            }
+            ArchiveContents::DataChunk(dt) => {
+                current_file_content.extend(dt);
+            }
+            ArchiveContents::EndOfEntry => {
+                let content_raw = String::from_utf8(current_file_content.clone()).unwrap();
+                current_file_content.clear();
+
+                let content = format!("{}={}", current_file_name, content_raw);
+                files_result.push(content);
+            }
+            _ => {}
+        }
+    }
+
+    iter.close().unwrap();
+
+    assert_eq!(files_result.len(), 2);
+    assert_eq!(
+        files_result,
+        vec![
+            "with-password/file1.txt=its encrypted file".to_string(),
+            "with-password/file2.txt=file 2 in archive encrypted!".to_string()
+        ]
+    );
 }
